@@ -1,0 +1,17 @@
+# Virtual environment
+.venv/
+venv/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Databases
+*.db
+data/*.db
