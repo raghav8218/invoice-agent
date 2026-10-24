@@ -12,7 +12,7 @@ class InvoiceRecord(BaseModel):
     invoice_date: date = Field(..., description="Date invoice was issued")
     due_date: Optional[date] = Field(None, description="Payment due date")
     amount: Decimal = Field(..., gt=0, description="Total amount due (positive)")
-    currency: str = Field(default="INR", min_length=3, max_length=3, description="3-letter currency code")
+    currency: str = Field(default="USD", min_length=3, max_length=3, description="3-letter currency code")
     source_filename: str = Field(..., min_length=1, description="PDF file name")
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -41,7 +41,7 @@ class InvoiceRecord(BaseModel):
 
 
 class ExtractedInvoice(BaseModel):
-    """Raw, unvalidated data extracted directly by the LLM."""
+    #llm extracted stuff
     vendor_name: Optional[str] = Field(None, description="Name of the vendor/supplier")
     invoice_number: Optional[str] = Field(None, description="Invoice number or ID")
     invoice_date: Optional[str] = Field(None, description="Invoice issue date as found in document")
