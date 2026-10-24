@@ -23,8 +23,9 @@ class VerificationError(DatabaseError):
 
 def get_connection(db_path: str = "data/invoices.db") -> sqlite3.Connection:
     # Creates folder if needed and connects to SQLite
-    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    target_path = os.getenv("DATABASE_PATH") or db_path
+    os.makedirs(os.path.dirname(os.path.abspath(target_path)), exist_ok=True)
+    conn = sqlite3.connect(target_path)
     conn.row_factory = sqlite3.Row
     return conn
 
