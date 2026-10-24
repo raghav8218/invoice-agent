@@ -36,26 +36,16 @@ class InvoiceAgentState(TypedDict):
 
 
 def extract_node(state: InvoiceAgentState) -> Dict[str, Any]:
-    # Node 1: Extracts raw invoice fields using Gemini
+    # Node 1: Extracts invoice visually using Gemini (immune to PDF font bugs)
     file_path = state["file_path"]
     new_retries = state.get("retry_count", 0) + 1
     history = list(state.get("history", []))
 
     try:
-        raw: Optional[ExtractedInvoice] = None
+        base64_data, mime_type = encode_file_to_base64(file_path)
+        raw = call_gemini_with_vision(base64_data, mime_type)
 
-        # Tier 1: Try text first if PDF
-        if file_path.lower().endswith(".pdf"):
-            text = extract_text_from_pdf(file_path)
-            if len(text) >= 50:
-                raw = call_gemini_with_text(text)
-
-        # Tier 2: Vision fallback
-        if not raw or not raw.vendor_name or not raw.amount:
-            base64_data, mime_type = encode_file_to_base64(file_path)
-            raw = call_gemini_with_vision(base64_data, mime_type)
-
-        history.append(f"Extraction attempt {new_retries} succeeded")
+        history.append(f"Visual extraction attempt {new_retries} succeeded")
         return {
             "retry_count": new_retries,
             "raw_extracted": raw.model_dump(),

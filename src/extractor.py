@@ -132,26 +132,11 @@ def build_validated_record(raw: ExtractedInvoice, source_filename: str) -> Invoi
 
 
 def extract_invoice(file_path: str, model_name: str = DEFAULT_MODEL) -> InvoiceRecord:
-    #Extracts, validates, and returns an InvoiceRecord from a local file
+    # Extracts invoice data visually using Gemini, immune to PDF font encoding bugs
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"File not found: {file_path}")
 
     source_filename = os.path.basename(file_path)
-    raw: Optional[ExtractedInvoice] = None
-
-    # 1. Try cheap text first if PDF
-    if file_path.lower().endswith(".pdf"):
-        text = extract_text_from_pdf(file_path)
-        if len(text) >= 50:
-            try:
-                raw = call_gemini_with_text(text, model_name)
-            except Exception:
-                raw = None
-
-    # 2. Vision fallback if text was empty or incomplete
-    if not raw or not raw.vendor_name or not raw.amount:
-        base64_data, mime_type = encode_file_to_base64(file_path)
-        raw = call_gemini_with_vision(base64_data, mime_type, model_name)
-
-    # 3. Validate and pack
+    base64_data, mime_type = encode_file_to_base64(file_path)
+    raw = call_gemini_with_vision(base64_data, mime_type, model_name)
     return build_validated_record(raw, source_filename)
