@@ -181,3 +181,95 @@ def human_review_node(state: InvoiceAgentState) -> Dict[str, Any]:
     history.append(f"Escalated to human review: {err}")
     log_execution(state["source_filename"], "human_review", "flagged", err)
     return {"status": "NEEDS_HUMAN_REVIEW", "history": history}
+
+
+def route_after_extraction(state: InvoiceAgentState) -> str:
+    # Routes after extraction: validate on success, retry if attempts remain, or review
+    if state.get("status") == "EXTRACTED":
+        return "validate"
+    if state.get("retry_count", 0) < 3:
+        return "extract"
+    return "human_review"
+
+
+def route_after_validation(state: InvoiceAgentState) -> str:
+    # Routes after validation: check duplicates if valid, else review
+    if state.get("status") == "VALIDATED":
+        return "duplicate_check"
+    return "human_review"
+
+
+def route_after_duplicate_check(state: InvoiceAgentState) -> str:
+    # Routes after duplicate check: save if unique, or end safely if duplicate
+    if state.get("status") == "UNIQUE":
+        return "save"
+    return "end"
+
+
+def route_after_save(state: InvoiceAgentState) -> str:
+    # Routes after save: verify if saved, else review
+    if state.get("status") == "SAVED":
+        return "verify"
+    return "human_review"
+
+
+def create_invoice_graph():
+    # Assembles all nodes and conditional edges into a runnable LangGraph application
+    workflow = StateGraph(InvoiceAgentState)
+
+    # 1. Register all nodes
+    workflow.add_node("extract", extract_node)
+    workflow.add_node("validate", validate_node)
+    workflow.add_node("duplicate_check", duplicate_check_node)
+    workflow.add_node("save", save_node)
+    workflow.add_node("verify", verify_node)
+    workflow.add_node("human_review", human_review_node)
+
+    # 2. Starting edge
+    workflow.add_edge(START, "extract")
+
+    # 3. Conditional edges (decision points)
+    workflow.add_conditional_edges(
+        "extract",
+        route_after_extraction,
+        {"validate": "validate", "extract": "extract", "human_review": "human_review"},
+    )
+    workflow.add_conditional_edges(
+        "validate",
+        route_after_validation,
+        {"duplicate_check": "duplicate_check", "human_review": "human_review"},
+    )
+    workflow.add_conditional_edges(
+        "duplicate_check",
+        route_after_duplicate_check,
+        {"save": "save", "end": END},
+    )
+    workflow.add_conditional_edges(
+        "save",
+        route_after_save,
+        {"verify": "verify", "human_review": "human_review"},
+    )
+
+    # 4. Terminal edges
+    workflow.add_edge("verify", END)
+    workflow.add_edge("human_review", END)
+
+    return workflow.compile()
+
+
+def run_invoice_agent(file_path: str) -> InvoiceAgentState:
+    # Top-level helper to run the compiled agent on a file
+    init_db()
+    app = create_invoice_graph()
+    initial_state: InvoiceAgentState = {
+        "file_path": file_path,
+        "source_filename": os.path.basename(file_path),
+        "raw_extracted": None,
+        "invoice_record": None,
+        "record_id": None,
+        "retry_count": 0,
+        "status": "PENDING",
+        "error_message": None,
+        "history": ["Started invoice agent"],
+    }
+    return app.invoke(initial_state)
