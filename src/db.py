@@ -7,22 +7,22 @@ from src.models import InvoiceRecord
 
 
 class DatabaseError(Exception):
-    """Base exception for database errors."""
+    # Base exception for database errors
     pass
 
 
 class DuplicateInvoiceError(DatabaseError):
-    """Raised when an invoice already exists."""
+    # Raised when an invoice already exists
     pass
 
 
 class VerificationError(DatabaseError):
-    """Raised when saved data doesn't match expected data."""
+    # Raised when saved data doesn't match expected data
     pass
 
 
 def get_connection(db_path: str = "data/invoices.db") -> sqlite3.Connection:
-    """Creates folder if needed and connects to SQLite."""
+    # Creates folder if needed and connects to SQLite
     os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -30,7 +30,7 @@ def get_connection(db_path: str = "data/invoices.db") -> sqlite3.Connection:
 
 
 def init_db(db_path: str = "data/invoices.db") -> None:
-    """Creates the tables if they don't already exist."""
+    # Creates the tables if they don't already exist
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         
@@ -65,11 +65,40 @@ def init_db(db_path: str = "data/invoices.db") -> None:
             );
             """
         )
+
+        # 3. Processed Gmail emails table (prevents duplicate downloads)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS processed_emails (
+                message_id TEXT PRIMARY KEY,
+                processed_at TEXT NOT NULL
+            );
+            """
+        )
+        conn.commit()
+
+
+def is_email_processed(message_id: str, db_path: str = "data/invoices.db") -> bool:
+    # Checks if a Gmail message_id was already downloaded or processed
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM processed_emails WHERE message_id = ?", (message_id,))
+        return cursor.fetchone() is not None
+
+
+def mark_email_processed(message_id: str, db_path: str = "data/invoices.db") -> None:
+    # Records that a Gmail message_id has been downloaded
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR IGNORE INTO processed_emails (message_id, processed_at) VALUES (?, ?)",
+            (message_id, datetime.now(timezone.utc).isoformat()),
+        )
         conn.commit()
 
 
 def check_duplicate(vendor_name: str, invoice_number: str, db_path: str = "data/invoices.db") -> bool:
-    """Checks if an invoice with the given vendor and invoice number already exists."""
+    # Checks if an invoice with the given vendor and invoice number already exists
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute(
@@ -83,11 +112,7 @@ def check_duplicate(vendor_name: str, invoice_number: str, db_path: str = "data/
 
 
 def save_invoice(invoice: InvoiceRecord, db_path: str = "data/invoices.db") -> int:
-    """
-    Saves a validated invoice to SQLite.
-    Returns the newly inserted row ID.
-    Raises DuplicateInvoiceError if vendor + invoice_number already exists.
-    """
+    # Saves a validated invoice to SQLite
     if check_duplicate(invoice.vendor_name, invoice.invoice_number, db_path):
         raise DuplicateInvoiceError(
             f"Invoice already exists for vendor '{invoice.vendor_name}' with number '{invoice.invoice_number}'"
@@ -118,7 +143,7 @@ def save_invoice(invoice: InvoiceRecord, db_path: str = "data/invoices.db") -> i
 
 
 def get_invoice_by_id(record_id: int, db_path: str = "data/invoices.db") -> Optional[InvoiceRecord]:
-    """Retrieves an invoice by ID and reconstructs the InvoiceRecord."""
+    # Retrieves an invoice by ID and reconstructs the InvoiceRecord
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM invoices WHERE id = ?", (record_id,))
@@ -139,10 +164,7 @@ def get_invoice_by_id(record_id: int, db_path: str = "data/invoices.db") -> Opti
 
 
 def verify_invoice(record_id: int, expected: InvoiceRecord, db_path: str = "data/invoices.db") -> bool:
-    """
-    Reads back the invoice from the database and checks that every field matches the original.
-    Raises VerificationError if any mismatch is found.
-    """
+    # Reads back the invoice from the database and checks that every field matches the original
     retrieved = get_invoice_by_id(record_id, db_path)
     if not retrieved:
         raise VerificationError(f"Verification failed: record id {record_id} not found in database.")
@@ -174,7 +196,7 @@ def log_execution(
     details: str = "",
     db_path: str = "data/invoices.db"
 ) -> None:
-    """Logs an agent execution step to the database."""
+    # Logs an agent execution step to the database
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute(

@@ -5,9 +5,18 @@ from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build, Resource
+from src.db import init_db, is_email_processed, mark_email_processed
 
 # Only read-only permission requested
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+# Configurable search query from .env to target specific senders/labels
+DEFAULT_GMAIL_QUERY = os.getenv(
+    "GMAIL_QUERY",
+    "has:attachment (filename:pdf OR filename:png OR filename:jpg OR filename:jpeg) invoice"
+)
+
+VALID_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg")
 
 
 def get_gmail_service(
@@ -46,7 +55,7 @@ def get_gmail_service(
 
 def search_invoice_emails(
     service: Resource,
-    query: str = "has:attachment (filename:pdf OR filename:png OR filename:jpg OR filename:jpeg) invoice",
+    query: str = DEFAULT_GMAIL_QUERY,
     max_results: int = 5
 ) -> List[str]:
     # Searches Gmail for emails with PDF or image invoice attachments
@@ -63,9 +72,6 @@ def search_invoice_emails(
         return []
 
 
-VALID_EXTENSIONS = (".pdf", ".png", ".jpg", ".jpeg")
-
-
 def download_attachments(
     service: Resource,
     message_ids: List[str],
@@ -76,10 +82,16 @@ def download_attachments(
     downloaded_files = []
 
     for msg_id in message_ids:
+        # Check if this email was already downloaded in a previous run
+        if is_email_processed(msg_id):
+            continue
+
         try:
             message = service.users().messages().get(userId="me", id=msg_id).execute()
             payload = message.get("payload", {})
             parts = payload.get("parts", [])
+
+            email_has_valid_attachment = False
 
             for part in parts:
                 filename = part.get("filename", "")
@@ -102,7 +114,11 @@ def download_attachments(
                         f.write(file_data)
 
                     downloaded_files.append(file_path)
+                    email_has_valid_attachment = True
                     print(f"  Downloaded from Gmail: {filename} -> {file_path}")
+
+            # Mark this email as processed so we never re-download it
+            mark_email_processed(msg_id)
 
         except Exception as e:
             print(f"  Failed downloading attachments for email {msg_id}: {e}")
@@ -111,11 +127,12 @@ def download_attachments(
 
 
 def fetch_invoices_from_gmail(
-    query: str = "has:attachment (filename:pdf OR filename:png OR filename:jpg OR filename:jpeg) invoice",
+    query: str = DEFAULT_GMAIL_QUERY,
     output_dir: str = "data/inbox",
     max_results: int = 5,
 ) -> List[str]:
     # High-level coordinator: authenticates, searches, and downloads invoice attachments
+    init_db()
     service = get_gmail_service()
     if not service:
         # Graceful fallback: returns empty list if credentials.json is not configured
@@ -128,7 +145,13 @@ def fetch_invoices_from_gmail(
         print("[Gmail] No matching invoice emails found.")
         return []
 
-    print(f"[Gmail] Found {len(message_ids)} matching email(s). Downloading attachments...")
-    downloaded = download_attachments(service, message_ids, output_dir=output_dir)
-    print(f"[Gmail] Successfully downloaded {len(downloaded)} attachment(s) to '{output_dir}'.")
+    # Filter out already-processed emails before downloading
+    new_message_ids = [m for m in message_ids if not is_email_processed(m)]
+    if not new_message_ids:
+        print(f"[Gmail] Found {len(message_ids)} matching email(s), but all have already been processed.")
+        return []
+
+    print(f"[Gmail] Found {len(new_message_ids)} new email(s). Downloading attachments...")
+    downloaded = download_attachments(service, new_message_ids, output_dir=output_dir)
+    print(f"[Gmail] Downloaded {len(downloaded)} new attachment(s) to '{output_dir}'.")
     return downloaded
