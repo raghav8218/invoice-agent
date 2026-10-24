@@ -2,14 +2,11 @@ import os
 import glob
 from src.db import init_db, get_connection
 from src.graph import run_invoice_agent
-
-
-def is_file_already_processed(filename: str, db_path: str = "data/invoices.db") -> bool:
-    # Free local check to prevent unnecessary Gemini API calls
-    with get_connection(db_path) as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1 FROM invoices WHERE source_filename = ?", (filename,))
-        return cursor.fetchone() is not None
+from src.file_manager import (
+    INBOX_DIR,
+    init_triage_folders,
+    triage_invoice_file,
+)
 
 
 def view_latest_records(db_path: str = "data/invoices.db") -> None:
@@ -33,37 +30,37 @@ def view_latest_records(db_path: str = "data/invoices.db") -> None:
 
 def main():
     init_db()
+    init_triage_folders()
 
-    folder = "data/sample_invoices"
-    pdf_files = glob.glob(os.path.join(folder, "*.pdf"))
+    pdf_files = glob.glob(os.path.join(INBOX_DIR, "*.pdf"))
+
+    print("=" * 60)
+    print(f"Scanning Inbox: '{INBOX_DIR}' ({len(pdf_files)} new invoices found)")
+    print("=" * 60)
 
     if not pdf_files:
-        print(f"No PDF invoices found in '{folder}'")
+        print(f"Inbox is empty! Place incoming invoices in '{INBOX_DIR}'.")
+        view_latest_records()
         return
-
-    print("=" * 60)
-    print(f"Scanning '{folder}' ({len(pdf_files)} PDF files found)...")
-    print("=" * 60)
 
     for pdf_path in pdf_files:
         filename = os.path.basename(pdf_path)
-
-        # 1. Zero-cost check: skip if already in SQLite
-        if is_file_already_processed(filename):
-            print(f"\n[SKIP] {filename} is already processed in SQLite. (0 API cost)")
-            continue
-
-        # 2. Process new invoice with LangGraph agent
         print(f"\n[AGENT RUNNING] Processing: {filename}")
+
+        # 1. Run LangGraph agent
         final_state = run_invoice_agent(pdf_path)
 
-        # 3. Print the timeline of what the agent decided
+        # 2. Print agent execution timeline
         print("  Timeline:")
         for step in final_state.get("history", []):
             print(f"    -> {step}")
         print(f"  Final Status: {final_state['status']}")
 
-    # 4. Display the database tables
+        # 3. Triage: Move file to success, human_review, or failed
+        triaged_path = triage_invoice_file(pdf_path, final_state["status"])
+        print(f"  Triaged: Moved file to '{triaged_path}'")
+
+    # 4. Display final database records
     view_latest_records()
 
 
