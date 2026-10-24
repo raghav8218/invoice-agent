@@ -7,6 +7,7 @@ from src.file_manager import (
     init_triage_folders,
     triage_invoice_file,
 )
+from src.gmail import fetch_invoices_from_gmail
 
 
 def view_latest_records(db_path: str = "data/invoices.db") -> None:
@@ -32,35 +33,42 @@ def main():
     init_db()
     init_triage_folders()
 
-    pdf_files = glob.glob(os.path.join(INBOX_DIR, "*.pdf"))
+    # 1. Check Gmail for new invoice attachments (graceful fallback if not configured)
+    fetch_invoices_from_gmail()
+
+    # 2. Scan inbox for files to process
+    valid_patterns = ("*.pdf", "*.png", "*.jpg", "*.jpeg")
+    invoice_files = []
+    for pattern in valid_patterns:
+        invoice_files.extend(glob.glob(os.path.join(INBOX_DIR, pattern)))
 
     print("=" * 60)
-    print(f"Scanning Inbox: '{INBOX_DIR}' ({len(pdf_files)} new invoices found)")
+    print(f"Scanning Inbox: '{INBOX_DIR}' ({len(invoice_files)} invoice(s) waiting)")
     print("=" * 60)
 
-    if not pdf_files:
-        print(f"Inbox is empty! Place incoming invoices in '{INBOX_DIR}'.")
+    if not invoice_files:
+        print(f"Inbox is empty! Place incoming invoices in '{INBOX_DIR}' or connect Gmail.")
         view_latest_records()
         return
 
-    for pdf_path in pdf_files:
-        filename = os.path.basename(pdf_path)
+    for file_path in invoice_files:
+        filename = os.path.basename(file_path)
         print(f"\n[AGENT RUNNING] Processing: {filename}")
 
-        # 1. Run LangGraph agent
-        final_state = run_invoice_agent(pdf_path)
+        # 3. Run LangGraph agent
+        final_state = run_invoice_agent(file_path)
 
-        # 2. Print agent execution timeline
+        # 4. Print agent execution timeline
         print("  Timeline:")
         for step in final_state.get("history", []):
             print(f"    -> {step}")
         print(f"  Final Status: {final_state['status']}")
 
-        # 3. Triage: Move file to success, human_review, or failed
-        triaged_path = triage_invoice_file(pdf_path, final_state["status"])
+        # 5. Triage: Move file to success, human_review, or failed
+        triaged_path = triage_invoice_file(file_path, final_state["status"])
         print(f"  Triaged: Moved file to '{triaged_path}'")
 
-    # 4. Display final database records
+    # 6. Display final database records
     view_latest_records()
 
 
