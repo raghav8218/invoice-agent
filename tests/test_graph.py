@@ -1,7 +1,7 @@
 import os
 from unittest.mock import patch
 import pytest
-from src.db import init_db, get_connection
+from src.db import init_db, get_connection, DatabaseError, VerificationError
 from src.models import ExtractedInvoice
 from src.graph import run_invoice_agent
 
@@ -141,3 +141,54 @@ def test_agent_duplicate_detection(mock_vision, test_db):
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) as count FROM invoices")
         assert cursor.fetchone()["count"] == 1
+
+
+@patch("src.graph.call_gemini_with_vision")
+@patch("src.graph.save_invoice")
+def test_agent_database_save_failure(mock_save, mock_vision, test_db):
+    # Test 5: Proves agent handles SQLite save errors safely without crashing
+    mock_vision.return_value = ExtractedInvoice(
+        vendor_name="Acme Supplies",
+        invoice_number="INV-999",
+        invoice_date="2024-03-01",
+        due_date="2024-04-01",
+        amount="1500.00",
+        currency="USD",
+    )
+    # Simulate a SQLite disk write failure
+    mock_save.side_effect = DatabaseError("Simulated SQLite disk write failure")
+
+    sample_file = "data/inbox/invoice_Aaron Hawkins_38460.pdf"
+    final_state = run_invoice_agent(sample_file)
+
+    # 1. Assert workflow caught the save failure and escalated to human review
+    assert final_state["status"] == "NEEDS_HUMAN_REVIEW"
+    assert "Simulated SQLite disk write failure" in final_state["error_message"]
+    assert final_state.get("record_id") is None
+
+
+@patch("src.graph.call_gemini_with_vision")
+@patch("src.graph.verify_invoice")
+def test_agent_verification_mismatch(mock_verify, mock_vision, test_db):
+    # Test 6: Proves agent detects when a saved row does not match in-memory data
+    mock_vision.return_value = ExtractedInvoice(
+        vendor_name="Acme Supplies",
+        invoice_number="INV-999",
+        invoice_date="2024-03-01",
+        due_date="2024-04-01",
+        amount="1500.00",
+        currency="USD",
+    )
+    # Simulate a data mismatch caught during read-back
+    mock_verify.side_effect = VerificationError("Saved amount does not match in-memory record")
+
+    sample_file = "data/inbox/invoice_Aaron Hawkins_38460.pdf"
+    final_state = run_invoice_agent(sample_file)
+
+    # 1. Assert verification failed
+    assert final_state["status"] == "VERIFICATION_FAILED"
+    assert "Saved amount does not match" in final_state["error_message"]
+    # Row was saved before verification failed
+    assert final_state["record_id"] == 1
+
+
